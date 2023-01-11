@@ -130,9 +130,11 @@ def process_user(email, saml_id, full_name, saml_attributes):
 
         current_user_dict = copy.deepcopy(user_dict)
 
-        if email != user_dict['email'] or full_name != user_dict['fullname']:
+        # We have removed the fullname check and update since full proofing isn't used.
+        # If we don't remove this, their display names will always be overwritten with the email addresses.
+        if email != user_dict['email']: # and full_name != user_dict['fullname']:
             user_dict['email'] = email
-            user_dict['fullname'] = full_name
+            # user_dict['fullname'] = full_name
 
         for plugin in plugins.PluginImplementations(ISaml2Auth):
             plugin.before_saml2_user_update(user_dict, saml_attributes)
