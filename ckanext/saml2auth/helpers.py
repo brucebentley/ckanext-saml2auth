@@ -45,8 +45,17 @@ def saml_client(config):
 
 
 def generate_password():
-    alphabet = string.ascii_letters + string.digits
-    password = ''.join(secrets.choice(alphabet) for i in range(8))
+    password_letters = list(string.ascii_letters)
+    password_digits = list(string.digits)
+    password_special = list(u"!@#$%^&*()")
+
+    password = [secrets.choice(password_letters) for i in range(4)] \
+        + [secrets.choice(password_digits) for i in range(4)] \
+        + [secrets.choice(password_special) for i in range(2)]
+
+    secrets.SystemRandom().shuffle(password)
+    password = u''.join(password)
+
     return password
 
 

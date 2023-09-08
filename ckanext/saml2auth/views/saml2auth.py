@@ -24,6 +24,8 @@ from flask import Blueprint, session
 from saml2 import entity
 from saml2.authn_context import requested_authn_context
 
+from sqlalchemy import text
+
 import ckan.plugins.toolkit as toolkit
 import ckan.model as model
 import ckan.plugins as plugins
@@ -65,18 +67,57 @@ def _dictize_user(user_obj):
 
 
 def _get_user_by_saml_id(saml_id):
-    user_obj = model.Session.query(model.User) \
-        .filter(model.User.plugin_extras[(u'saml2auth', u'saml_id')].astext == saml_id) \
-        .first()
+    # Query for string match first
+    user_obj = model.Session.query(model.User).filter(
+        model.User.plugin_extras[(u'saml2auth', u'saml_id')].astext == saml_id
+    ).first()
 
-    h.activate_user_if_deleted(user_obj)
+    if user_obj:
+        h.activate_user_if_deleted(user_obj)
+        return _dictize_user(user_obj)
 
-    return _dictize_user(user_obj) if user_obj else None
+    # Due to Dept of Ed multiple SAML logins, we need to query for array match as well
+    sql_query = """
+        WITH Filtered AS (
+          SELECT *
+          FROM "user"
+          WHERE jsonb_typeof(plugin_extras->'saml2auth'->'saml_id') = 'array'
+        ),
+        SimpleMatch AS (
+          SELECT *
+          FROM "user"
+          WHERE plugin_extras->'saml2auth'->>'saml_id' = :saml_id
+        )
+        SELECT * FROM SimpleMatch
+        UNION
+        SELECT *
+        FROM Filtered
+        WHERE EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements_text(plugin_extras->'saml2auth'->'saml_id')
+          WHERE value = :saml_id
+        )
+        LIMIT 1;
+    """
+
+    result = model.Session.execute(text(sql_query), {'saml_id': saml_id}).fetchone()
+
+    if result:
+        user_id = result[0]
+        user_obj = model.Session.query(model.User).filter_by(id=user_id).first()
+        if user_obj:
+            h.activate_user_if_deleted(user_obj)
+            return _dictize_user(user_obj)
+
+    return None
 
 
 def _get_user_by_email(email):
 
-    user = model.User.by_email(email)
+    user = model.Session.query(model.User).filter(
+        model.User.email.ilike(email)
+    ).first()
+
     if user and isinstance(user, list):
         user = user[0]
 
@@ -155,11 +196,23 @@ def process_user(email, saml_id, full_name, saml_attributes):
 
     if user_dict:
         user_dict[u'password'] = h.generate_password()
+        plugin_extras = user_dict.get(u'plugin_extras', {})
+        current_saml_id = plugin_extras.get(u'saml2auth', {}).get(u'saml_id')
+
+        if current_saml_id is None:
+            current_saml_id = [saml_id]
+        elif isinstance(current_saml_id, list):
+            current_saml_id.append(saml_id)
+        elif isinstance(current_saml_id, str):
+            current_saml_id = [current_saml_id, saml_id]
+        else:
+            current_saml_id = [saml_id]
+
         user_dict[u'plugin_extras'] = {
             u'saml2auth': {
                 # Store the saml username
                 # in the corresponding CKAN user
-                u'saml_id': saml_id
+                u'saml_id': current_saml_id
             }
         }
 
@@ -182,7 +235,7 @@ def process_user(email, saml_id, full_name, saml_attributes):
             u'saml2auth': {
                 # Store the saml username
                 # in the corresponding CKAN user
-                u'saml_id': saml_id
+                u'saml_id': [saml_id]
             }
         }
     }
