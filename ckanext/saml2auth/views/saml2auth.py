@@ -195,9 +195,13 @@ def process_user(email, saml_id, full_name, saml_attributes):
     user_dict = _get_user_by_email(email)
 
     if user_dict:
+        current_saml_id = None
         user_dict[u'password'] = h.generate_password()
         plugin_extras = user_dict.get(u'plugin_extras', {})
-        current_saml_id = plugin_extras.get(u'saml2auth', {}).get(u'saml_id')
+        if isinstance(plugin_extras, dict):
+            saml2_auth = plugin_extras.get(u'saml2auth', {})
+            if isinstance(saml2_auth,dict):
+                current_saml_id = saml2_auth.get(u'saml_id', None)
 
         if current_saml_id is None:
             current_saml_id = [saml_id]
